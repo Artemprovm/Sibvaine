@@ -41,4 +41,15 @@ public class BuildMenu {
         int x = panelWidth - width - 20; 
         return mouseX >= x && mouseX <= x + width && mouseY >= 20 && mouseY <= 20 + 300;
     }
+    public int getClickedCell(int mouseX, int mouseY, int panelWidth) {
+    int xStart = panelWidth - 150 - 20; 
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 2; j++) {
+            int cx = xStart + 15 + j * 65;
+            int cy = 20 + 45 + i * 65;
+            if (mouseX >= cx && mouseX <= cx + 55 && mouseY >= cy && mouseY <= cy + 55) return i * 2 + j;
+        }
+    }
+    return -1;
+ }
 }
