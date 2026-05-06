@@ -11,7 +11,7 @@ import javax.imageio.ImageIO;
 import javax.swing.*;
 
 public class play extends JPanel implements ActionListener {
-    private BufferedImage floor1, floor2, floor3, ggf1, ggf2, playerImage, factoryImage;
+    private BufferedImage floor1, floor2, floor3, ggf1, ggf2, playerImage, factoryImage, burImage;
     
     private final int TILE_SIZE = 32;  
     private final int PLAYER_SIZE = 40; 
@@ -24,8 +24,8 @@ public class play extends JPanel implements ActionListener {
     private final int WORLD_HEIGHT = 100;
 
     private BuildMenu buildMenu = new BuildMenu();
-    private int selectedBuild = -1; // -1 = ничего, 0 = завод 2x2
-    private ArrayList<Rectangle> buildings = new ArrayList<>(); // Храним тут заводы
+    private int selectedBuild = -1; 
+    private ArrayList<Building> buildings = new ArrayList<>(); 
 
     private final Set<Integer> pressedKeys = new HashSet<>();
     private ArrayList<Point> waterPlants = new ArrayList<>(); 
@@ -43,13 +43,14 @@ public class play extends JPanel implements ActionListener {
             ggf1 = ImageIO.read(new File("ggf1.png"));
             ggf2 = ImageIO.read(new File("ggf2.png"));
             playerImage = ImageIO.read(new File("player.png"));
-            // Если файла нет, пока будет просто рисоваться серый квадрат
+            burImage = ImageIO.read(new File("bur.png"));
+            
             File f = new File("factory.png");
             if(f.exists()) factoryImage = ImageIO.read(f);
             
             generateWorld();
         } catch (IOException e) {
-            System.out.println("ОШИБКА: " + e.getMessage());
+            System.out.println("ОШИБКА ЗАГРУЗКИ: " + e.getMessage());
         }
 
         Timer timer = new Timer(16, this);
@@ -64,47 +65,108 @@ public class play extends JPanel implements ActionListener {
         addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
-                int cell = buildMenu.getClickedCell(e.getX(), e.getY(), getWidth());
-                if (cell != -1) {
-                    selectedBuild = cell;
-                } else if (selectedBuild != -1) {
-                    if (SwingUtilities.isLeftMouseButton(e)) {
-                        int camX = (int)playerX - getWidth() / 2;
-                        int camY = (int)playerY - getHeight() / 2;
-                        int gx = ((e.getX() + camX) / TILE_SIZE) * TILE_SIZE;
-                        int gy = ((e.getY() + camY) / TILE_SIZE) * TILE_SIZE;
-                        int size = (selectedBuild == 0) ? TILE_SIZE * 2 : TILE_SIZE;
-                        
-                        Rectangle newBuilding = new Rectangle(gx, gy, size, size);
+                int camX = calculateCamX();
+                int camY = calculateCamY();
+                int mouseWorldX = e.getX() + camX;
+                int mouseWorldY = e.getY() + camY;
 
-                        // ПРОВЕРКА 1: Границы карты
+
+                // 1. УДАЛЕНИЕ (Правая кнопка)
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    for (int i = 0; i < buildings.size(); i++) {
+                        
+                        // ТУТ ИСПРАВЛЕНО: проверяем через .rect.contains
+                        if (buildings.get(i).rect.contains(mouseWorldX, mouseWorldY)) {
+                            buildings.remove(i);
+                            repaint();
+                            return;
+                        }
+                    }
+                    selectedBuild = -1;
+                } 
+
+
+                // 2. СТРОИТЕЛЬСТВО (Левая кнопка)
+                else if (SwingUtilities.isLeftMouseButton(e)) {
+                    int cell = buildMenu.getClickedCell(e.getX(), e.getY(), getWidth());
+
+                    if (cell != -1) {
+                        selectedBuild = cell;
+                    } else if (selectedBuild != -1) {
+
+                        int gx = (mouseWorldX / TILE_SIZE) * TILE_SIZE;
+                        int gy = (mouseWorldY / TILE_SIZE) * TILE_SIZE;
+                        
+                        // Завод (0) — размер 2x2 (64), Бур (1) — размер 1x1 (32)
+                        int size = (selectedBuild == 0) ? TILE_SIZE * 2 : TILE_SIZE;
+
+                        // Временный квадрат для проверок
+                        Rectangle tempRect = new Rectangle(gx, gy, size, size);
+
+
+                        // ПРОВЕРКА 1: Границы
                         boolean inBounds = gx >= 0 && gy >= 0 && 
                                           (gx + size) <= (WORLD_WIDTH * TILE_SIZE) && 
                                           (gy + size) <= (WORLD_HEIGHT * TILE_SIZE);
 
-                        // ПРОВЕРКА 2: Наложение
-                        boolean canPlace = inBounds; 
+
+                        // ПРОВЕРКА 2: Ресурсы для бура
+                        boolean canPlace = inBounds;
+
+                        if (canPlace && selectedBuild == 1) { 
+                            boolean onResource = false;
+                            
+                            for (Point p : iron) {
+                                if (p.x == gx && p.y == gy) onResource = true;
+                            }
+                            
+                            for (Point p : silicon) {
+                                if (p.x == gx && p.y == gy) onResource = true;
+                            }
+
+                            if (!onResource) {
+                                System.out.println("Тут нет руды для бура!");
+                                canPlace = false;
+                            }
+                        }
+
+
+                        // ПРОВЕРКА 3: Наложение на другие здания
                         if (canPlace) {
-                            for (Rectangle b : buildings) {
-                                if (newBuilding.intersects(b)) {
+                            for (Building b : buildings) {
+                                
+                                // ТУТ ИСПРАВЛЕНО: проверяем пересечение с b.rect
+                                if (tempRect.intersects(b.rect)) {
                                     canPlace = false;
                                     break;
                                 }
                             }
                         }
 
+
+                        // ИТОГ: Ставим новое здание типа Building
                         if (canPlace) {
-                            buildings.add(newBuilding);
-                        } else {
-                            System.out.println("Тут строить нельзя!");
+                            // ТУТ ИСПРАВЛЕНО: создаем объект нашего нового класса
+                            buildings.add(new Building(gx, gy, size, selectedBuild));
                         }
-                    } else {
-                        selectedBuild = -1; // Отмена на правую кнопку
+
                     }
                 }
             }
         });
 
+
+    }
+
+    // Вспомогательные методы для камеры
+    private int calculateCamX() {
+        int cx = (int)playerX - getWidth() / 2;
+        return Math.max(0, Math.min(cx, WORLD_WIDTH * TILE_SIZE - getWidth()));
+    }
+
+    private int calculateCamY() {
+        int cy = (int)playerY - getHeight() / 2;
+        return Math.max(0, Math.min(cy, WORLD_HEIGHT * TILE_SIZE - getHeight()));
     }
 
     private void generateWorld() {
@@ -130,36 +192,23 @@ public class play extends JPanel implements ActionListener {
         if (pressedKeys.contains(KeyEvent.VK_D)) dx += 1;
 
         if (dx != 0 || dy != 0) {
-            // 1. Сначала ВСЕГДА обновляем угол, чтобы игрок мог вращаться на месте у стены
             angle = Math.atan2(dy, dx);
-            
             double length = Math.sqrt(dx * dx + dy * dy);
             double nextX = playerX + (dx / length) * SPEED;
             double nextY = playerY + (dy / length) * SPEED;
 
-            // 2. Теперь проверяем границы отдельно для каждой оси
-            int mapLimitX = WORLD_WIDTH * TILE_SIZE;
-            int mapLimitY = WORLD_HEIGHT * TILE_SIZE;
-
-            // Если по X мы в границах — двигаемся по X
-            if (nextX > 0 && nextX < mapLimitX) {
-                playerX = nextX;
-            }
-            // Если по Y мы в границах — двигаемся по Y
-            if (nextY > 0 && nextY < mapLimitY) {
-                playerY = nextY;
-            }
+            if (nextX > 0 && nextX < WORLD_WIDTH * TILE_SIZE) playerX = nextX;
+            if (nextY > 0 && nextY < WORLD_HEIGHT * TILE_SIZE) playerY = nextY;
         }
     }
-
-
 
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         Graphics2D g2d = (Graphics2D) g;
-        int camX = (int)playerX - getWidth() / 2;
-        int camY = (int)playerY - getHeight() / 2;
+        
+        int camX = calculateCamX();
+        int camY = calculateCamY();
 
         g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
 
@@ -176,19 +225,24 @@ public class play extends JPanel implements ActionListener {
         for (Point p : silicon) g2d.drawImage(floor3, p.x - camX, p.y - camY, TILE_SIZE, TILE_SIZE, null);
         for (Point p : iron) g2d.drawImage(ggf2, p.x - camX, p.y - camY, TILE_SIZE, TILE_SIZE, null);
 
-        // 3. ПОСТРОЙКИ
-        for (Rectangle r : buildings) {
-            if (factoryImage != null) {
-                g2d.drawImage(factoryImage, r.x - camX, r.y - camY, r.width, r.height, null);
-            } else {
-                g2d.setColor(Color.GRAY);
-                g2d.fillRect(r.x - camX, r.y - camY, r.width, r.height);
+        // 3. Постройки на карте
+        for (Building b : buildings) {
+            if (b.type == 0) { // Это завод
+                if (factoryImage != null) {
+                    g2d.drawImage(factoryImage, b.rect.x - camX, b.rect.y - camY, b.rect.width, b.rect.height, null);
+                }
+            } 
+            else if (b.type == 1) { // Это бур
+                if (burImage != null) {
+                    g2d.drawImage(burImage, b.rect.x - camX, b.rect.y - camY, b.rect.width, b.rect.height, null);
+                }
             }
         }
 
+
         // 4. Игрок
         AffineTransform old = g2d.getTransform();
-        g2d.translate(getWidth() / 2, getHeight() / 2); 
+        g2d.translate(playerX - camX, playerY - camY); 
         g2d.rotate(angle + Math.PI / 2); 
         g2d.drawImage(playerImage, -PLAYER_SIZE/2, -PLAYER_SIZE/2, PLAYER_SIZE, PLAYER_SIZE, null);
         g2d.setTransform(old);
@@ -197,23 +251,19 @@ public class play extends JPanel implements ActionListener {
         if (selectedBuild != -1) {
             Point m = getMousePosition();
             if (m != null) {
-                g2d.setColor(new Color(0, 255, 255, 100));
-                int size = (selectedBuild == 0) ? TILE_SIZE * 2 : TILE_SIZE;
-                int gx = ((m.x + camX) / TILE_SIZE) * TILE_SIZE - camX;
-                int gy = ((m.y + camY) / TILE_SIZE) * TILE_SIZE - camY;
-                g2d.fillRect(gx, gy, size, size);
+                // Если мышка не над меню, рисуем призрак
+                if (!buildMenu.isClicked(m.x, m.y, getWidth())) {
+                    g2d.setColor(new Color(0, 255, 255, 100));
+                    int size = (selectedBuild == 0) ? TILE_SIZE * 2 : TILE_SIZE;
+                    // Рассчитываем сетку с учетом камеры
+                    int gx = ((m.x + camX) / TILE_SIZE) * TILE_SIZE - camX;
+                    int gy = ((m.y + camY) / TILE_SIZE) * TILE_SIZE - camY;
+                    g2d.fillRect(gx, gy, size, size);
+                }
             }
         }
-
-        buildMenu.draw(g2d, getWidth());
-    }
-
-    public static void main(String[] args) {
-        JFrame frame = new JFrame("Sibvaine");
-        frame.add(new play());
-        frame.setSize(800, 600);
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setLocationRelativeTo(null);
-        frame.setVisible(true);
+        
+        // --- ИСПРАВЛЕНО: Теперь вызываем только с Graphics2D и шириной ---
+        buildMenu.draw(g2d, getWidth(), factoryImage, burImage);
     }
 }
